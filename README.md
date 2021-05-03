@@ -14,6 +14,8 @@ much focus as of yet, but I do consider it a priority platform for the project.
 If you don't feel up to running it, or (more likely) it won't run, check out the
 swash_and_textedit.png screenshot in the repo root.
 
+This currently requires OpenGL 4.1.
+
 # Usage
 ```
 cargo run --release
