@@ -9,7 +9,9 @@ You will break it. It will crash. You are likely to be eaten by a grue.
 It was tested most recently (as in, just before release) on a Mac. So you'll have the
 best luck there. It will probably work on Windows. I have no idea if it still works
 on Linux, but if not, feel free to file issues and I'll take a look. Linux hasn't received
-much focus as of yet, but I do consider it a priority platform for the project.
+much focus as of yet, but I do consider it a priority platform for the project. (Note that 
+swash itself has zero platform specific dependencies and works perfectly well on Linux or
+any other OS)
 
 If you don't feel up to running it, or (more likely) it won't run, check out the
 swash_and_textedit.png screenshot in the repo root.
