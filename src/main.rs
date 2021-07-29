@@ -280,6 +280,42 @@ fn main() {
                             F5 => {
                                 //always_update = !always_update;
                             }
+                            F7 => {
+                                let mut clusters = Vec::new();
+                                let mut u = 0;
+                                for line in layout.lines() {
+                                    for run in line.runs() {
+                                        for (i, cluster) in run.visual_clusters().enumerate() {
+                                            clusters.push((cluster, u, line.baseline()));
+                                            u += 1;
+                                        }
+                                    }
+                                }
+                                let mut clusters2 = clusters.clone();
+                                clusters2.sort_by(|a, b| a.0.offset().cmp(&b.0.offset()));
+                                for (i, c2) in clusters2.iter().enumerate() {
+                                    clusters[c2.1].1 = i;
+                                }
+                                let mut glyphs = Vec::new();
+                                let mut x = 0.;
+                                for cluster in &clusters {
+                                    for mut glyph in cluster.0.glyphs() {
+                                        glyph.x += x;
+                                        glyph.y = cluster.2;
+                                        x += glyph.advance;
+                                        glyphs.push((cluster.1, glyph));
+                                    }
+                                }
+                                let chars = doc.text.char_indices().collect::<Vec<_>>();
+                                for (i, g) in glyphs.iter().enumerate() {
+                                    if let Some((j, ch)) = chars.get(g.0).copied() {
+                                        println!(
+                                            "| {} | {} | {} | {} | {:.2}, {:.2} |",
+                                            g.0, j, ch, g.1.id, g.1.x, g.1.y
+                                        );
+                                    }
+                                }
+                            }                            
                             Left => {
                                 selection = if cmd {
                                     selection.home(&layout, shift)
