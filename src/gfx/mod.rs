@@ -33,15 +33,15 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(kind: BufferKind) -> Self {
-        unsafe {
+        
             let mut id = 0;
-            gl::GenBuffers(1, &mut id);
+            unsafe { gl::GenBuffers(1, &mut id) };
             Self {
                 id,
                 kind,
                 capacity: 0,
             }
-        }
+        
     }
 
     pub fn update<T: Copy>(&mut self, data: &[T]) {
