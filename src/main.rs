@@ -6,43 +6,92 @@ mod gfx;
 mod layout;
 mod util;
 
-use glutin::dpi::LogicalSize;
-use glutin::event::{Event, ModifiersState, WindowEvent};
-use glutin::event_loop::{ControlFlow, EventLoop};
-use glutin::window::WindowBuilder;
-use glutin::ContextBuilder;
+use glutin::config::ConfigTemplateBuilder;
+use glutin::context::{ContextApi, ContextAttributesBuilder, Version};
+use glutin::display::GetGlDisplay;
+use glutin::prelude::{GlConfig, GlDisplay, NotCurrentGlContextSurfaceAccessor};
+use glutin::surface::{GlSurface, SurfaceAttributesBuilder};
+use winit::event::{Event, ModifiersState, WindowEvent};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
+use glutin_winit::ApiPrefence;
+use raw_window_handle::HasRawWindowHandle;
 
 use comp::*;
 use comp::{color, color::Color};
 use gfx::gl;
 use layout::*;
+
+use std::env;
+use std::num::NonZeroU32;
 use std::time::Instant;
 
 fn main() {
     use clipboard2::Clipboard;
     let clipboard = clipboard2::SystemClipboard::new().unwrap();
-    let el = EventLoop::new();
-    let wb = WindowBuilder::new()
-        .with_title("swash demo")
-        .with_inner_size(LogicalSize::new(1024, 768))
-        .with_resizable(true);
-    let windowed_context = ContextBuilder::new()
-        .with_vsync(false)
-        .build_windowed(wb, &el)
+
+    let window_builder = WindowBuilder::new()
+        .with_transparent(false)
+        .with_resizable(true)
+        .with_inner_size(winit::dpi::PhysicalSize::new(1024, 768))
+        .with_title("Swash demo");
+
+    if cfg!(target_os = "linux") {
+        // disables vsync sometimes on x11
+        if env::var("vblank_mode").is_err() {
+            env::set_var("vblank_mode", "0");
+        }
+    }
+
+    let events = winit::event_loop::EventLoop::new();
+
+    let (window, gl_config) = glutin_winit::DisplayBuilder::new()
+        .with_preference(ApiPrefence::FallbackEgl)
+        .with_window_builder(Some(window_builder))
+        .build(&events, ConfigTemplateBuilder::default(), |configs| {
+            configs
+                .filter(|c| c.srgb_capable())
+                .max_by_key(|c| c.num_samples())
+                .unwrap()
+        })
         .unwrap();
-    let windowed_context = unsafe { windowed_context.make_current().unwrap() };
-    println!(
-        "Pixel format of the window's GL context: {:?}",
-        windowed_context.get_pixel_format()
-    );
-    gfx::gl::load(&windowed_context.context());
+
+    let window = window.unwrap(); // set in display builder
+    let raw_window_handle = window.raw_window_handle();
+    let gl_display = gl_config.display();
+
+    let context_attributes = ContextAttributesBuilder::new()
+        .with_context_api(ContextApi::OpenGl(Some(Version::new(3, 1))))
+        .with_profile(glutin::context::GlProfile::Core)
+        .build(Some(raw_window_handle));
+
+    let dimensions = window.inner_size();
+
+    let (gl_surface, gl_ctx) = {
+        let attrs = SurfaceAttributesBuilder::<glutin::surface::WindowSurface>::new().build(
+            raw_window_handle,
+            NonZeroU32::new(dimensions.width).unwrap(),
+            NonZeroU32::new(dimensions.height).unwrap(),
+        );
+
+        let surface = unsafe { gl_display.create_window_surface(&gl_config, &attrs) }.unwrap();
+        let context = unsafe { gl_display.create_context(&gl_config, &context_attributes) }
+            .unwrap()
+            .make_current(&surface)
+            .unwrap();
+        (surface, context)
+    };
+
+    // load
+    gfx::gl::load(&gl_display);
+
     const MARGIN: f32 = 12.;
-    let mut keymods = glutin::event::ModifiersState::default();
-    let mut dpi = windowed_context.window().scale_factor() as f32;
+    let mut keymods = winit::event::ModifiersState::default();
+    let mut dpi = window.scale_factor() as f32;
     let mut margin = MARGIN * dpi;
     let fonts = layout::FontLibrary::default();
     let mut lcx = LayoutContext::new(&fonts);
-    let initial_size = windowed_context.window().inner_size();
+    let initial_size = window.inner_size();
     let mut layout = Paragraph::new();
     let mut doc = build_document();
     let mut first_run = true;
@@ -70,18 +119,22 @@ fn main() {
     let mut dlist = comp::DisplayList::new();
     let mut align = Alignment::Start;
     let mut always_update = false;
-    windowed_context
-        .window()
-        .set_cursor_icon(glutin::window::CursorIcon::Text);
+
+    window.set_cursor_icon(winit::window::CursorIcon::Text);
+
     // let quad = gfx::FullscreenQuad::new();
-    el.run(move |event, _, control_flow| {
+    events.run(move |event, _, control_flow| {
         //println!("{:?}", event);
         *control_flow = ControlFlow::Poll;
         match event {
             Event::LoopDestroyed => return,
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::Resized(physical_size) => {
-                    windowed_context.resize(physical_size);
+                    gl_surface.resize(
+                        &gl_ctx,
+                        NonZeroU32::new(physical_size.width).unwrap(),
+                        NonZeroU32::new(physical_size.height).unwrap(),
+                    );
                     selection_changed = true;
                     size_changed = true;
                 }
@@ -91,7 +144,7 @@ fn main() {
                     margin = MARGIN * dpi;
                     needs_update = true;
                     selection_changed = true;
-                    windowed_context.window().request_redraw();
+                    window.request_redraw();
                 }
                 WindowEvent::ModifiersChanged(mods) => keymods = mods,
                 WindowEvent::CursorMoved { position, .. } => {
@@ -106,7 +159,7 @@ fn main() {
                     }
                 }
                 WindowEvent::MouseInput { state, button, .. } => {
-                    use glutin::event::{ElementState, MouseButton};
+                    use winit::event::{ElementState, MouseButton};
                     if button != MouseButton::Left {
                         return;
                     }
@@ -169,7 +222,7 @@ fn main() {
                     }
                 }
                 WindowEvent::KeyboardInput { input, .. } => {
-                    use glutin::event::{ElementState, VirtualKeyCode, VirtualKeyCode::*};
+                    use winit::event::{ElementState, VirtualKeyCode, VirtualKeyCode::*};
                     if input.state != ElementState::Pressed {
                         return;
                     }
@@ -177,7 +230,7 @@ fn main() {
                         let shift = keymods.intersects(ModifiersState::SHIFT);
                         let ctrl = keymods.intersects(ModifiersState::CTRL);
                         let cmd = keymods.intersects(ModifiersState::LOGO);
-                        windowed_context.window().request_redraw();
+                        window.request_redraw();
                         cursor_time = 0.;
                         cursor_on = true;
                         match key {
@@ -253,8 +306,8 @@ fn main() {
                                 if ctrl || cmd {
                                     if !selection.is_collapsed() {
                                         let text =
-                                        doc.get_selection(selection.normalized_range(&layout));
-                                    clipboard.set_string_contents(text).ok();
+                                            doc.get_selection(selection.normalized_range(&layout));
+                                        clipboard.set_string_contents(text).ok();
                                         if let Some(erase) = selection.erase(&layout) {
                                             if let Some(offset) = doc.erase(erase) {
                                                 inserted = Some(offset);
@@ -315,7 +368,7 @@ fn main() {
                                         );
                                     }
                                 }
-                            }                            
+                            }
                             Left => {
                                 selection = if cmd {
                                     selection.home(&layout, shift)
@@ -355,7 +408,7 @@ fn main() {
                 _ => (),
             },
             Event::MainEventsCleared => {
-                windowed_context.window().request_redraw();
+                window.request_redraw();
             }
             Event::RedrawRequested(_) => {
                 let cur_time = Instant::now();
@@ -372,7 +425,7 @@ fn main() {
                         frame_count as f32 / total_time
                     )
                     .ok();
-                    windowed_context.window().set_title(&title);
+                    window.set_title(&title);
                     total_time = 0.;
                     frame_count = 0;
                 }
@@ -391,7 +444,7 @@ fn main() {
                 if first_run {
                     needs_update = true;
                 }
-                let window_size = windowed_context.window().inner_size();
+                let window_size = window.inner_size();
                 let w = window_size.width;
                 let h = window_size.height;
                 if always_update {
@@ -468,7 +521,7 @@ fn main() {
                     device.render(w, h, &dlist);
                     gl::Flush();
                 }
-                windowed_context.swap_buffers().unwrap();
+                gl_surface.swap_buffers(&gl_ctx).unwrap();
             }
             _ => (),
         }
@@ -589,4 +642,3 @@ fn build_document() -> doc::Document {
 }
 
 const WIKI_TYPOGRAPHY_REST: &'static str = " when displayed. The arrangement of type involves selecting typefaces, point sizes, line lengths, line-spacing (leading), and letter-spacing (tracking), and adjusting the space between pairs of letters (kerning). The term typography is also applied to the style, arrangement, and appearance of the letters, numbers, and symbols created by the process.";
-
