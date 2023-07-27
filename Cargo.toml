@@ -8,10 +8,13 @@ build = "build.rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-swash = { git = "https://github.com/dfrg/swash" }
-memmap2 = "0.2.1"
-glutin = "0.26.0"
+swash = "0.1.8"
+memmap2 = "0.7.1"
 clipboard2 = "0.1.1"
+glutin = "0.30.3"
+glutin-winit = "0.3.0"
+winit = "0.28.6"
+raw-window-handle = "0.5.0"
 
 [build-dependencies]
-gl_generator = "0.14"
+gl_generator = "0.14.0"
