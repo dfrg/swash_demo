@@ -13,5 +13,8 @@ memmap2 = "0.2.1"
 glutin = "0.26.0"
 clipboard2 = "0.1.1"
 
+[target.'cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))'.dependencies]
+fontconfig-parser = "0.5"
+
 [build-dependencies]
 gl_generator = "0.14"
