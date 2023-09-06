@@ -3,14 +3,14 @@ use super::index_data::*;
 use super::library::FontLibrary;
 use super::system::{Os, OS};
 use super::types::*;
-use crate::util::{string::SmallString};
+use crate::util::string::SmallString;
 use std::{
     fs,
     path::{Path, PathBuf},
     sync::RwLock,
     time::SystemTime,
 };
-use swash::{CacheKey, Attributes, FontDataRef, FontRef, Stretch, StringId, Style, Weight};
+use swash::{Attributes, CacheKey, FontDataRef, FontRef, Stretch, StringId, Style, Weight};
 
 /// Hint for specifying whether font files should be memory mapped.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -137,6 +137,22 @@ impl FontLibraryBuilder {
 
     /// Builds a library for the current configuration.
     pub fn build(&mut self) -> FontLibrary {
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+        let fontconfig = load_fontconfig();
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+        {
+            let home = std::env::var("HOME");
+            fontconfig.dirs.iter().for_each(|dir| {
+                if dir.path.starts_with("~") {
+                    if let Ok(ref home) = home {
+                        let path = Path::new(home).join(dir.path.strip_prefix("~").unwrap());
+                        self.add_dir(path);
+                    }
+                } else {
+                    self.add_dir(dir.clone().path);
+                };
+            });
+        }
         let mut index = StaticIndex::default();
         core::mem::swap(&mut index, &mut self.inner.index);
         for family in index.families.iter_mut() {
@@ -150,6 +166,42 @@ impl FontLibraryBuilder {
         if self.fallbacks {
             index.setup_default_fallbacks();
         }
+
+        #[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+        {
+            use fontconfig_parser::Alias;
+
+            if self.generics {
+                fontconfig.aliases.iter().for_each(
+                    |Alias {
+                         alias,
+                         default,
+                         prefer,
+                         accept,
+                     }| {
+                        let names = [&prefer[..], &accept[..], &default[..]].concat();
+                        let find_family = |families: Vec<String>| {
+                            for family in families {
+                                if let Some(id) = index
+                                    .base
+                                    .family_map
+                                    .get(family.trim().to_lowercase().as_str())
+                                {
+                                    return Some(*id);
+                                }
+                            }
+                            None
+                        };
+                        if let Some(generic_family) = GenericFamily::parse(alias) {
+                            if let Some(id) = find_family(names.clone()) {
+                                index.generic[generic_family as usize] = Some(id);
+                            };
+                        }
+                    },
+                )
+            }
+        }
+
         FontLibrary::new(index)
     }
 }
@@ -473,4 +525,37 @@ impl Scanner {
         f(&self.font);
         Some(())
     }
+}
+
+#[cfg(all(unix, not(any(target_os = "macos", target_os = "android"))))]
+fn load_fontconfig() -> fontconfig_parser::FontConfig {
+    let mut fontconfig = fontconfig_parser::FontConfig::default();
+    let home = std::env::var("HOME");
+
+    if let Ok(ref config_file) = std::env::var("FONTCONFIG_FILE") {
+        let _ = fontconfig.merge_config(Path::new(config_file));
+    } else {
+        let xdg_config_home = if let Ok(val) = std::env::var("XDG_CONFIG_HOME") {
+            Some(val.into())
+        } else if let Ok(ref home) = home {
+            // according to https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
+            // $XDG_CONFIG_HOME should default to $HOME/.config if not set
+            Some(Path::new(home).join(".config"))
+        } else {
+            None
+        };
+
+        let read_global = match xdg_config_home {
+            Some(p) => fontconfig
+                .merge_config(&p.join("fontconfig/fonts.conf"))
+                .is_err(),
+            None => true,
+        };
+
+        if read_global {
+            let _ = fontconfig.merge_config(Path::new("/etc/fonts/local.conf"));
+        }
+        let _ = fontconfig.merge_config(Path::new("/etc/fonts/fonts.conf"));
+    }
+    fontconfig
 }

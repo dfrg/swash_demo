@@ -74,7 +74,11 @@ pub enum FamilyKey<'a> {
 
 impl<'a> From<&'a str> for FamilyKey<'a> {
     fn from(name: &'a str) -> Self {
-        Self::Name(name)
+        if let Some(generic_family) = GenericFamily::parse(name) {
+            Self::Generic(generic_family)
+        } else {
+            Self::Name(name)
+        }
     }
 }
 
